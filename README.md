@@ -7,6 +7,8 @@
 
 # KCD1 Clarity
 
+**RTX Encore users:** See the [compatibility setup and crash fix](docs/encore-compatibility.md).
+
 NVIDIA DLSS for **Kingdom Come: Deliverance** (the first game). It replaces the game's built-in anti-aliasing with
 DLSS. That gives a cleaner, more stable image, and with upscaling, more FPS. The game renders at a lower resolution
 and DLSS brings it back up to your screen's.
