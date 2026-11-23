@@ -2,11 +2,17 @@
 
 #include <d3dcompiler.h>
 
+#include <atomic>
+#include <mutex>
+
 #include "core/log.h"
 #include "renderer/state_backup.h"
 
 namespace kc::velocity_mask {
 
+// Render hooks can re-enter when the cleanup pass binds its own targets.
+static std::recursive_mutex g_state_mutex;
+static std::atomic_bool g_frame_reset_pending{false};
 static Status g_status;
 static bool g_prev_velocity;     // the last binding had the velocity target (with a depth target)
 static void* g_prev_depth;       // identity only
@@ -47,7 +53,15 @@ static ID3D11ShaderResourceView* g_depth_srv;
 static ID3D11Resource* g_vel_key;
 static ID3D11RenderTargetView* g_vel_rtv;
 
-Status& status() { return g_status; }
+Status status() {
+    const std::lock_guard lock(g_state_mutex);
+    return g_status;
+}
+
+void set_enabled(bool enabled) {
+    const std::lock_guard lock(g_state_mutex);
+    g_status.enabled = enabled;
+}
 
 static ID3D11Resource* resource(ID3D11View* v) {
     ID3D11Resource* r = nullptr;
@@ -178,25 +192,45 @@ static void clear_pending() {
     g_static_rt0 = nullptr;
 }
 
+static void reset_frame_if_pending() {
+    if (!g_frame_reset_pending.exchange(false))
+        return;
+    clear_pending();
+    g_valid = false;
+    g_prev_velocity = false;
+    g_prev_depth = nullptr;
+}
+
 // The static G-buffer pass is over: fix the engine's velocity target itself, so every reader (TAA/DLSS, the SVO GI
 // temporal passes) gets the camera motion on occluders.
 static void cleanup(ID3D11DeviceContext* ctx, DrawFn draw) {
+    const Microsoft::WRL::ComPtr<ID3D11Resource> depth(g_depth);
+    const Microsoft::WRL::ComPtr<ID3D11Resource> velocity(g_velocity);
+    if (!depth || !velocity || !g_srv)
+        return;
+
     ID3D11Device* device = nullptr;
     ctx->GetDevice(&device);
+    if (!device)
+        return;
     bool ok = ensure_shaders(device);
-    if (ok && g_depth_key != g_depth) {
+    if (ok && g_depth_key != depth.Get()) {
         drop_view(g_depth_key, g_depth_srv);
         D3D11_SHADER_RESOURCE_VIEW_DESC sd = {};
         sd.Format = depth_view_format(g_copy_desc.Format);
         sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
         sd.Texture2D.MipLevels = 1;
-        if (SUCCEEDED(device->CreateShaderResourceView(g_depth, &sd, &g_depth_srv)))
-            g_depth_key = g_depth, g_depth->AddRef();
+        if (SUCCEEDED(device->CreateShaderResourceView(depth.Get(), &sd, &g_depth_srv)) && g_depth_srv) {
+            g_depth_key = depth.Get();
+            g_depth_key->AddRef();
+        }
     }
-    if (ok && g_vel_key != g_velocity) {
+    if (ok && g_vel_key != velocity.Get()) {
         drop_view(g_vel_key, g_vel_rtv);
-        if (SUCCEEDED(device->CreateRenderTargetView(g_velocity, nullptr, &g_vel_rtv)))
-            g_vel_key = g_velocity, g_velocity->AddRef();
+        if (SUCCEEDED(device->CreateRenderTargetView(velocity.Get(), nullptr, &g_vel_rtv)) && g_vel_rtv) {
+            g_vel_key = velocity.Get();
+            g_vel_key->AddRef();
+        }
     }
     device->Release();
     if (!ok || !g_depth_srv || !g_vel_rtv) {
@@ -228,8 +262,10 @@ static void cleanup(ID3D11DeviceContext* ctx, DrawFn draw) {
 
 void on_set_targets(ID3D11DeviceContext* ctx, UINT n, ID3D11RenderTargetView* const* rtvs, ID3D11DepthStencilView* dsv,
                     DrawFn draw) {
+    const std::lock_guard lock(g_state_mutex);
     if (g_busy)
         return;
+    reset_frame_if_pending();
     if (!g_status.enabled) {
         g_valid = false;
         clear_pending();
@@ -273,12 +309,14 @@ void on_set_targets(ID3D11DeviceContext* ctx, UINT n, ID3D11RenderTargetView* co
 }
 
 void on_present() {
-    clear_pending();
-    g_valid = false;
-    g_prev_velocity = false;
-    g_prev_depth = nullptr;
+    // A generated frame can present while the game is preparing the next frame.
+    g_frame_reset_pending.store(true);
 }
 
-ID3D11ShaderResourceView* depth_copy() { return g_status.enabled && g_valid ? g_srv : nullptr; }
+Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> depth_copy() {
+    const std::lock_guard lock(g_state_mutex);
+    // Keep a valid in-progress capture intact if a generated frame presented mid-render.
+    return Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>(g_status.enabled && g_valid ? g_srv : nullptr);
+}
 
 }  // namespace kc::velocity_mask

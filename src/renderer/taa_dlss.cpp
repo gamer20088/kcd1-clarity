@@ -400,7 +400,7 @@ bool on_taa_draw(ID3D11DeviceContext* ctx, const d3d11::TaaShader& taa) {
     ds.is_hdr = true;  // colour is linear (sRGB view of the SMAA output), in [0, 1]
     ds.depth_inverted = g_settings.depth_mode == 2 || (g_settings.depth_mode == 0 && g_status.reverse_depth > 0);
 
-    ID3D11ShaderResourceView* vel_depth = velocity_mask::depth_copy();
+    const auto vel_depth = velocity_mask::depth_copy();
     // Params for the prepare pass.
     D3D11_MAPPED_SUBRESOURCE m;
     if (FAILED(ctx->Map(g_params, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
@@ -464,7 +464,7 @@ bool on_taa_draw(ID3D11DeviceContext* ctx, const d3d11::TaaShader& taa) {
     }
 
     // 1. Colour/depth copies and full-screen motion vectors.
-    ID3D11ShaderResourceView* srvs[4] = {b.colour, b.depth, b.velocity, vel_depth};
+    ID3D11ShaderResourceView* srvs[4] = {b.colour, b.depth, b.velocity, vel_depth.Get()};
     ID3D11UnorderedAccessView* uavs[3] = {g_colour.uav, g_depth.uav, g_mv.uav};
     ID3D11Buffer* cbs[2] = {b.cb, g_params};
     ctx->CSSetShader(g_prepare_cs, nullptr, 0);

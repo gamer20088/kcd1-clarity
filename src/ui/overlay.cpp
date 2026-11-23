@@ -409,10 +409,12 @@ static void draw_dlss_section() {
                         log2f(s.render_scale), mip_bias::status().clones);
     ImGui::TextDisabled("noise texture %s; motion vectors %s", shadow_noise::found() ? "found" : "not found",
                         velocity_format::promoted() ? "16-bit" : "8-bit (velocity16 off or restart needed)");
-    ImGui::Checkbox("Drop occluded object velocities", &velocity_mask::status().enabled);
+    auto velocity_status = velocity_mask::status();
+    if (ImGui::Checkbox("Drop occluded object velocities", &velocity_status.enabled))
+        velocity_mask::set_enabled(velocity_status.enabled);
     ImGui::SameLine();
-    ImGui::TextDisabled("%llu depth copies, %llu cleanups", (unsigned long long)velocity_mask::status().snapshots,
-                        (unsigned long long)velocity_mask::status().cleanups);
+    ImGui::TextDisabled("%llu depth copies, %llu cleanups", (unsigned long long)velocity_status.snapshots,
+                        (unsigned long long)velocity_status.cleanups);
     if (snap.valid && snap.aa_mode_active != 3)
         ImGui::TextColored(kWarn, "Anti-aliasing is not SMAA 2TX (r_AntialiasingMode 3): the TAA pass does not run");
 

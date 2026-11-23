@@ -1,5 +1,6 @@
 #pragma once
 #include <d3d11.h>
+#include <wrl/client.h>
 
 #include <cstdint>
 
@@ -19,15 +20,16 @@ using DrawFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT);
 // draw: the unhooked Draw, for the cleanup pass.
 void on_set_targets(ID3D11DeviceContext* ctx, UINT n, ID3D11RenderTargetView* const* rtvs, ID3D11DepthStencilView* dsv,
                     DrawFn draw);
-// Start of a frame: the copy is stale until the next transition.
+// Mark the copy stale without releasing render resources on a presentation thread.
 void on_present();
-// Depth copy taken this frame (SRV of the depth part), or nullptr.
-ID3D11ShaderResourceView* depth_copy();
+// Own the depth view while preparing the DLSS inputs, even if the next frame replaces it.
+Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> depth_copy();
 
 struct Status {
     bool enabled = true;
     uint64_t snapshots = 0, cleanups = 0;
 };
-Status& status();
+Status status();
+void set_enabled(bool enabled);
 
 }  // namespace kc::velocity_mask
