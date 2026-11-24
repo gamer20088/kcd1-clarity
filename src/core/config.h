@@ -16,6 +16,7 @@ struct Config {
     bool velocity_cleanup = true;  // [dlss] velocity_cleanup: camera motion on occluders (velocity_mask)
     bool force_halton = true;  // [dlss] force_halton: r_AntialiasingTAAPattern 8, only while output = 1
     bool cut_guard = true;     // [dlss] cut_guard: zero the motion vectors on camera cuts
+    bool map_fix = true;       // [dlss] map_fix: zero motion vectors to Encore on map/menu frames
 };
 
 Config& config();

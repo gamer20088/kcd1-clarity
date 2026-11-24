@@ -66,6 +66,7 @@ static DWORD WINAPI init_thread(LPVOID) {
     taa_dlss::settings().output = static_cast<taa_dlss::Output>(config().output);
     taa_dlss::settings().force_halton = config().force_halton;
     taa_dlss::settings().cut_guard = config().cut_guard;
+    taa_dlss::settings().map_fix = config().map_fix;
     velocity_format::set_enabled(config().velocity16);
     velocity_mask::set_enabled(config().velocity_cleanup);
 
@@ -84,6 +85,8 @@ static DWORD WINAPI init_thread(LPVOID) {
     g_state.game_timestamp = sym::status().module_timestamp;
 
     g_state.hooks_installed = install_present_hooks();
+    if (config().map_fix)
+        install_end_frame_hook();
     d3d11::install();  // before the game creates its shaders
     // Installed last: the game may raise and handle its own exceptions during startup.
     install_crash_logger();

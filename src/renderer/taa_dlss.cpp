@@ -145,7 +145,8 @@ static bool g_shaders_failed;
 
 // Camera-cut guard resources.
 constexpr float kCutMotion = 0.25f;   // UV per frame: a quarter of the screen in one frame
-constexpr float kCutFraction = 0.5f;  // share of the screen that must exceed it
+constexpr float kCutFraction = 0.65f;  // share of the screen that must exceed it (real cuts: 69-85% in game;
+                                       // 50-62% was fast motion such as riding)
 constexpr int kCutRing = 3;           // staging copies, read back a couple of frames late (log only)
 static ID3D11ComputeShader* g_cut_cs;
 static ID3D11Buffer* g_cut_params;
@@ -288,6 +289,42 @@ static bool ensure_textures(ID3D11Device* device, UINT w, UINT h) {
 // ---------------------------------------------------------------------------------------------------------
 
 static uint64_t g_taa_draws_seen;  // TAA draws since start (render thread)
+
+// Map fix (map_fix): on frames where the game draws no 3D scene (map, inventory, menus), there is no TAA draw and so
+// no DLSS call, and Encore falls back to its own motion estimation for them. At the engine's RT_EndFrame (render
+// thread, after the frame is drawn, before it is presented) such frames get a DLSS call with zero motion vectors, so
+// Encore keeps using game vectors and treats the screen as still. Frames with a 3D scene are not touched.
+static DWORD g_render_thread;               // thread of the TAA draws
+static ID3D11DeviceContext* g_ctx;          // the immediate context of the TAA draws (AddRef'd once, kept)
+static dlss::EvalInputs g_last_in;          // inputs of the last 3D frame
+static bool g_have_inputs;
+static bool g_taa_this_frame;
+static uint64_t g_map_evals;
+
+void on_end_frame() {
+    if (GetCurrentThreadId() != g_render_thread)
+        return;
+    if (g_taa_this_frame) {
+        g_taa_this_frame = false;
+        return;
+    }
+    if (!g_settings.map_fix || g_settings.mode != Mode::On || !g_have_inputs || !g_ctx)
+        return;
+    bool ok;
+    {
+        d3d11::ScopedInside inside;
+        StateBackup backup(g_ctx);
+        const float zero[4] = {};
+        g_ctx->ClearUnorderedAccessViewFloat(g_mv.uav, zero);
+        dlss::EvalInputs in = g_last_in;
+        in.jitter_x = in.jitter_y = 0.0f;
+        in.reset = false;
+        ok = dlss::evaluate(g_ctx, in);
+    }
+    if (++g_map_evals == 1 || !ok)
+        logf("taa_dlss: map fix: no 3D scene, zero motion vectors handed to Encore (%s)",
+             ok ? "ok" : "DLSS evaluate failed");
+}
 
 void on_present() {
     // Log when the game stops drawing its 3D scene (map, menus, loading) and when it resumes. On those frames there
@@ -512,6 +549,16 @@ bool on_taa_draw(ID3D11DeviceContext* ctx, const d3d11::TaaShader& taa) {
         in.mv_scale_y = static_cast<float>(h);
         in.reset = g_reset || recreated;
         ok = dlss::evaluate(ctx, in);
+        if (ok) {
+            if (!g_ctx) {
+                g_ctx = ctx;
+                g_ctx->AddRef();
+            }
+            g_render_thread = GetCurrentThreadId();
+            g_last_in = in;
+            g_have_inputs = true;
+            g_taa_this_frame = true;
+        }
         g_reset = false;
 
         // 3. Output = Dlaa only: into the engine's TAA output, encoded like PostAA_PS.

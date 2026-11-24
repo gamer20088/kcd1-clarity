@@ -27,6 +27,7 @@ struct Settings {
     Output output = Output::Game;
     bool force_halton = true;   // r_AntialiasingTAAPattern 8 (Halton 2,3) while output = Dlaa
     bool cut_guard = true;      // zero the motion vectors on camera cuts (most of the screen jumps at once)
+    bool map_fix = true;        // zero motion vectors to Encore on frames without a 3D scene (map, menus)
     bool jitter_flip_x = true;  // confirmed in game 2026-10-15: DLSS jitter = (-x, +y) of gRenDev+0xF20
     bool jitter_flip_y = false;
     bool mv_flip_x = false;
@@ -54,5 +55,7 @@ void request_reset();
 bool on_taa_draw(ID3D11DeviceContext* ctx, const d3d11::TaaShader& taa);
 // Render thread, every Present: keeps the engine on the jitter pattern DLAA output needs.
 void on_present();
+// Render thread, at the start of the engine's CD3D9Renderer::RT_EndFrame: the map fix.
+void on_end_frame();
 
 }  // namespace kc::taa_dlss

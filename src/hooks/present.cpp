@@ -8,6 +8,7 @@
 #include <MinHook.h>
 
 #include "core/log.h"
+#include "game/symbols.h"
 #include "renderer/taa_dlss.h"
 #include "renderer/velocity_mask.h"
 
@@ -97,6 +98,27 @@ static bool find_swapchain_vtable(void** present, void** resize_buffers) {
     DestroyWindow(window);
     UnregisterClassW(wc.lpszClassName, wc.hInstance);
     return SUCCEEDED(hr);
+}
+
+// CD3D9Renderer::RT_EndFrame(this, ...): forwards the integer argument registers untouched.
+using EndFrameFn = uintptr_t(__fastcall*)(void*, uintptr_t, uintptr_t, uintptr_t);
+static EndFrameFn o_end_frame;
+
+static uintptr_t __fastcall hk_end_frame(void* self, uintptr_t a, uintptr_t b, uintptr_t c) {
+    taa_dlss::on_end_frame();
+    return o_end_frame(self, a, b, c);
+}
+
+bool install_end_frame_hook() {
+    void* target = reinterpret_cast<void*>(sym::addr(sym::Id::CD3D9Renderer__RT_EndFrame));
+    if (!target) {
+        logf("hooks: RT_EndFrame not resolved, map fix unavailable");
+        return false;
+    }
+    MH_STATUS c = MH_CreateHook(target, &hk_end_frame, reinterpret_cast<void**>(&o_end_frame));
+    MH_STATUS e = MH_EnableHook(target);
+    logf("hooks: RT_EndFrame %p (%s), enable %s", target, MH_StatusToString(c), MH_StatusToString(e));
+    return c == MH_OK && e == MH_OK;
 }
 
 bool install_present_hooks() {

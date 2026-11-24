@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
             float cut_mv;
         } p = {0, 1, {1.0f / W, 1.0f / H}, {W, H}, {1, 1}, {1, 1}, 0, 0.25f};
         upload(ctx, params, &p, sizeof(p));
-        const UINT cp[4] = {W, H, static_cast<UINT>(0.5f * W * H), 0};
+        const UINT cp[4] = {W, H, static_cast<UINT>(0.65f * W * H), 0};  // kCutFraction
         upload(ctx, cut_params, cp, sizeof(cp));
 
         const UINT zero[4] = {};
