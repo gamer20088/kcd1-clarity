@@ -1,185 +1,101 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/wordmark.png">
-    <img src="docs/assets/wordmark-dark.png" alt="KCD1 Clarity" width="520">
-  </picture>
-</p>
+# KCD1 Clarity encore-lite
 
-# KCD1 Clarity
+Gives **RTX Encore**'s frame generation the real motion vectors and depth from **Kingdom Come: Deliverance** (the
+first game), so Encore reports **Using Game Vectors** instead of estimating motion from the image.
 
-**RTX Encore users:** See the [compatibility setup and crash fix](docs/encore-compatibility.md).
+A stripped-down build of [KCD1 Clarity](https://github.com/eonflux7/kcd1-clarity) 0.2.0, kept to that single job.
+Unofficial mod, not affiliated with Warhorse Studios, NVIDIA or the RTX Encore project.
 
-NVIDIA DLSS for **Kingdom Come: Deliverance** (the first game). It replaces the game's built-in anti-aliasing with
-DLSS. That gives a cleaner, more stable image, and with upscaling, more FPS. The game renders at a lower resolution
-and DLSS brings it back up to your screen's.
-
-Unofficial mod, not affiliated with Warhorse Studios or NVIDIA. Uses NVIDIA DLSS.
-
-> **Early version.** DLAA (100%) is the most reliable mode. Below 100% some effects can still look wrong. Please
-> [report](#reporting-bugs) anything you see.
-
-**Website:** [eonflux7.github.io/kcd1-clarity](https://eonflux7.github.io/kcd1-clarity/) ·
-[Config guide & cvar database](https://eonflux7.github.io/kcd1-clarity/cvars/)
-
-**Players:** [Requirements](#requirements) · [Install](#install) · [AMD / Intel](#amd-and-intel-gpus-optiscaler) · [Linux](#linux-proton) · [Use](#use)
-· [Troubleshooting](#troubleshooting)
-· [Config files & console variables](#config-files-and-console-variables)
-
-**Developers:** [Building](#building-from-source) · [How it works](#how-it-works)
-
-## Requirements
-
-- An **NVIDIA RTX** graphics card (RTX 20 series or newer) with a recent driver. AMD and Intel cards can use
-  FSR or XeSS through [OptiScaler](#amd-and-intel-gpus-optiscaler) instead.
-- Windows, or Linux with Steam's Proton ([Linux](#linux-proton)).
-- Kingdom Come: Deliverance, **Steam version 1.9.8**. Other versions (GOG, older patches) are
-  untested. The mod's menu warns you if it doesn't recognise your game version.
-- Not tested together with ReShade, ENB or other graphics injectors.
-
-## Install
-
-1. **[Download the latest release](../../releases/latest).** Under *Assets*, get `kcd-clarity-<version>.zip`.
-   (The green *Code* button downloads the source code, which you don't need.)
-2. Open the game folder. In Steam: right-click the game > *Manage* > *Browse local files*. Then open `Bin\Win64`.
-3. Copy `dinput8.dll` and `nvngx_dlss.dll` from the zip into `Bin\Win64`.
-4. Start the game. In *Options > Video*, set **Anti-aliasing** to **SMAA 2TX**. DLSS takes the place of that setting,
-   so with any other anti-aliasing option the mod does nothing.
-5. In game, press **F8**, select **DLSS**, and pick a quality level.
-
-**Other mods:** this mod is loaded as `dinput8.dll`. Other mods that use their own `dinput8.dll` (Ultimate ASI Loader,
-ASI plugins, other DLSS mods) can't be installed at the same time. Copying one over the other replaces it.
-
-**Uninstall:** delete `dinput8.dll` and `nvngx_dlss.dll` from `Bin\Win64`. You can also delete `kcd_clarity.ini` and
-`kcd_clarity.log` there.
-
-## AMD and Intel GPUs (OptiScaler)
-
-> **Untested.** It should work, since OptiScaler implements the NGX calls the mod makes, but nobody has confirmed
-> it yet. Reports are welcome.
-
-The mod talks to DLSS through NVIDIA's NGX interface. [OptiScaler](https://github.com/optiscaler/OptiScaler)
-intercepts NGX and can run FSR or XeSS instead, so the mod works on AMD and Intel cards with it.
-
-1. Install the mod as above.
-2. From an OptiScaler release, copy `OptiScaler.dll` into `Bin\Win64` and **rename it to `winmm.dll`**. Also copy
-   `OptiScaler.ini`. Don't use `dinput8.dll`, which is this mod's name. `version.dll` works too. If you use OptiScaler's
-   setup script, pick one of those two names.
-3. Start the game. The F8 menu shows "OptiScaler *version* (winmm.dll)" when it's loaded. Choose DLSS in F8 as usual,
-   then press **Insert** for OptiScaler's menu and pick the upscaler (FSR, XeSS). *Model preset* applies only to
-   DLSS.
-
-If F8 says the upscaler is not available, check `OptiScaler.log` and follow OptiScaler's own guide for your GPU
-(GPU spoofing, fakenvapi). On NVIDIA cards OptiScaler isn't needed. If it's installed anyway, keep
-`nvngx_dlss.dll` so it can still use DLSS.
-
-## Linux (Proton)
-
-> **Untested.** It runs as an ordinary Windows mod under Proton, but nobody has confirmed it yet. Reports are
-> welcome.
-
-Install the DLLs as on Windows. Then, in Steam, right-click the game > *Properties* > *Launch options*:
-
-- **NVIDIA:** `WINEDLLOVERRIDES="dinput8=n,b" PROTON_ENABLE_NVAPI=1 %command%`. Wine prefers its own
-  `dinput8.dll`, and the override makes it load the mod's. `PROTON_ENABLE_NVAPI=1` turns on DLSS support in Proton
-  (it needs a recent Proton and NVIDIA driver).
-- **AMD / Intel** (with OptiScaler installed as `winmm.dll`, see above): `WINEDLLOVERRIDES="dinput8,winmm=n,b" %command%`.
-
-If `kcd_clarity.log` doesn't appear in `Bin/Win64`, the override isn't in effect. The log says "running under Wine"
-when the mod has loaded under Proton.
-
-## Use
-
-Press **F8** in game to open the settings, and again to close them. While the menu is open, the mouse controls the
-menu instead of the game.
-
-| setting | what it does |
-|---|---|
-| Engine TAA / DLSS | switch between the game's own anti-aliasing and DLSS, live |
-| Quality | the resolution the game renders at before DLSS: DLAA 100%, Quality 66.7%, Balanced 58%, Performance 50%, Ultra Performance 33%. Lower = more FPS, softer image |
-| Model preset | which DLSS model to use. *Default* lets the driver choose; K is NVIDIA's recommended model for quality |
-| Texture mip bias | keeps textures sharp at lower quality levels. The offset slider fine-tunes it (negative = sharper, can shimmer) |
-| Shadow noise | two fixes for shadow flicker with DLSS. Leave them on unless shadows look wrong |
-| FPS counter | small FPS readout in the corner |
-
-Your settings are saved in `Bin\Win64\kcd_clarity.ini`. To use different keys, change `toggle_key` (F8) or
-`debug_key` (F3) under `[ui]` there, using [Windows virtual-key codes](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes)
-in decimal (F8 = 119). Leave the `[debug]` section at its defaults.
-
-**F3** opens a debug window. You only need it for bug reports.
-
-## Troubleshooting
-
-| problem | what to check |
-|---|---|
-| F8 does nothing | the two DLLs must be in `Bin\Win64`, not the game's main folder. If `kcd_clarity.log` doesn't appear there after starting the game, the mod isn't loading; check for another mod's `dinput8.dll` |
-| F8 menu: "Set Anti-aliasing to SMAA 2TX" | change it in *Options > Video* |
-| F8 menu: "DLSS is not available" | needs an RTX card, an up-to-date NVIDIA driver, and `nvngx_dlss.dll` next to `dinput8.dll`. On AMD/Intel, install [OptiScaler](#amd-and-intel-gpus-optiscaler). On Linux, see the [launch options](#linux-proton) |
-| Linux: F8 does nothing | the `WINEDLLOVERRIDES` launch option is missing; see [Linux](#linux-proton) |
-| F8 menu: "engine functions not found" or "Untested game version" | your game version differs from the one the mod supports, usually after a game update. Check for a newer mod release |
-| something looks wrong below 100% | try DLAA. If it's fine there, it's a bug in the lower-resolution path; please report it |
-
-## Reporting bugs
-
-[Open an issue](../../issues) with:
-- your GPU, the quality level, the game's resolution and video settings;
-- a screenshot, ideally of the same spot with *Engine TAA* and with *DLSS*;
-- `Bin\Win64\kcd_clarity.log` from that session (attach the file).
-
-## Config files and console variables
-
-The **[config guide](https://eonflux7.github.io/kcd1-clarity/cvars/)** builds a `user.cfg` / `autoexec.cfg` for
-your PC, checks any config line by line, and lists every console variable with what it really does. The research
-behind it is in [docs/cvars](docs/cvars/README.md), which explains how the game loads `user.cfg` and `autoexec.cfg`, and which tweaks there
-actually do something. Many popular lines are refused or overwritten by the game. It includes a script that checks
-your own config. You don't need any of it to use this mod.
-
----
-
-## Building from source
-
-Needs Windows and Visual Studio 2022 (or the Build Tools) with the *Desktop development with C++* workload; CMake and
-Ninja come with it. Then run `build.cmd`. On the first build, CMake downloads Dear ImGui, MinHook and the needed DLSS
-SDK files and checks them against pinned SHA-256 hashes ([THIRD_PARTY.md](THIRD_PARTY.md)).
-
-- `build.cmd` builds `build\dinput8.dll` (RelWithDebInfo, static CRT; the PDB is `build\dinput8.pdb`).
-- `build.cmd dist` also writes `dist\kcd-clarity-<version>.zip`, the release package, including
-  [release/README.txt](release/README.txt). The version comes from `project()` in `CMakeLists.txt`.
-- To test, copy `build\dinput8.dll` and `build\ngx\rel\nvngx_dlss.dll` into the game's `Bin\Win64`.
-  `build\ngx\dev\nvngx_dlss.dll` is NVIDIA's development runtime, which can show NVIDIA's DLSS debug overlay. Use it
-  for testing only, never in a release.
-- From WSL, run `build.cmd` through a drive-letter path (e.g. `Z:\...`); a `\\wsl.localhost\` path fails to link.
-  `./deploy.sh` copies the build (with the dev runtime) into the game, `--remove` takes it out again, and `KCD_BIN`
-  overrides the game path.
-
-Debugging: the log (`kcd_clarity.log`) and the F3 window come first. `[debug] d3d_debug=1` in the ini turns on the
-D3D11 debug layer, with its messages in the log. For RenderDoc captures, tick *Skip NGX* in F3, since NGX doesn't run
-under RenderDoc.
+> **Status:** builds cleanly and passes the offline D3D11 (WARP) regression test. In-game testing is still in
+> progress. Please report what you see, with `kcd_clarity.log` and `rtx-encore.log`.
 
 ## How it works
 
-- **Loading.** `WHGame.dll` imports `DirectInput8Create`, and Windows looks in `Bin\Win64` before System32. The mod
-  forwards the dinput8 exports to the system DLL (`src/core/proxy_*`). An init thread waits until the game loads
-  `d3d11.dll`, then installs its hooks (MinHook).
-- **Engine functions.** `src/generated/kcd_symbols.h` lists the engine functions and data the mod uses, with byte
-  patterns and RVAs for the supported build. `src/game/symbols.cpp` resolves them at startup. Data symbols (RVA only)
-  are used only on that build.
-- **DLSS.** `src/hooks/d3d11_hooks.cpp` recognises the engine's TAA resolve shader (PostAA, SMAA 2TX) by its
-  reflection. When that shader draws, `src/renderer/taa_dlss.cpp` builds full-screen motion vectors the way the TAA
-  shader does, runs DLSS (`src/upscaler/dlss.cpp`), and writes the result to the TAA output.
-- **Upscaling.** Below 100%, the engine's own viewport downscale renders the scene into the top-left sub-rect of each
-  full-size target. Several passes don't handle that correctly. `src/renderer/screen_size_fix.cpp` and
-  `src/game/renderer.cpp` fix them by patching constants and UVs per draw. `src/renderer/canary.cpp` is a debug tool
-  that finds passes reading outside the sub-rect.
-- **Image quality.** Motion vectors are promoted to 16 bits (`velocity_format`). Object velocities left on
-  now-occluded pixels are dropped (`velocity_mask`). Texture LOD is biased for the render scale (`mip_bias`), and the
-  shadow filter noise is made temporal (`shadow_noise`).
-- **UI.** Dear ImGui, drawn from a `Present` hook (`src/hooks/present.cpp`, `src/ui/`).
+RTX Encore 2.5.0 only uses game motion vectors on DirectX 11 when it can read them from the game's DLSS call. KCD1 has
+no DLSS, so this mod provides one:
 
-The symbols and engine notes come from a separate reverse-engineering workspace that isn't published. Source comments
-that cite `kcd-re db/notes/*.md` refer to it. Porting to another game build means finding the symbols in
-`kcd_symbols.h` again, starting from their signatures.
+1. At the game's SMAA 2TX resolve draw, it builds full-screen motion vectors from the engine's reprojection matrix and
+   object velocity, plus a copy of the depth buffer.
+2. It runs a DLAA evaluation with those inputs. Encore reads the vectors and depth from that call.
+3. With `output=0` (the default), the DLAA image is discarded and **the game's own SMAA 2TX image is what you see**.
+   With `output=1`, the DLAA image replaces it.
 
-## License
+The DLAA pass runs either way, so it costs some GPU time even when its image isn't shown.
 
-MIT for the source in this repository; see [LICENSE](LICENSE). Third-party components keep their own licenses
-([THIRD_PARTY.md](THIRD_PARTY.md)). NVIDIA, RTX and DLSS are trademarks of NVIDIA Corporation.
+## Requirements
+
+- NVIDIA RTX graphics card.
+- Kingdom Come: Deliverance, Steam version **1.9.8**, DirectX 11, at **native resolution**.
+- Anti-aliasing set to **SMAA 2TX** in the game's video options. The mod looks for that shader.
+- [RTX Encore](https://github.com/SilyNoMeta/rtx-encore) 2.5.0 with DLSS frame generation enabled, motion estimation
+  set to **Game motion vectors**, and Encore's own upscaling off.
+- `nvngx_dlss.dll` in `Bin\Win64`. Encore's install usually provides it; otherwise use the one from the build.
+
+## Install
+
+1. Close the game.
+2. Copy `dinput8.dll` into `Bin\Win64` (next to `KingdomCome.exe`).
+3. Start the game and load a save. Encore's overlay should show **Using Game Vectors** at 2×.
+
+If Encore shows estimated motion during startup, start Encore at 1× and switch to 2× after the save loads.
+
+Any other mod that installs a `dinput8.dll` (Ultimate ASI Loader, full KCD1 Clarity) conflicts with this one. Only one
+can be installed.
+
+## Settings
+
+`Bin\Win64\kcd_clarity.ini` is created on first start:
+
+```ini
+[general]
+mode=1             ; 0 = off (stock game), 1 = on
+output=0           ; 0 = game's SMAA 2TX on screen, 1 = DLAA on screen
+[dlss]
+preset=0           ; NGX render preset, 0 = DLSS default
+velocity16=1       ; object motion vectors at 16 bits (restart to change)
+velocity_cleanup=1 ; camera motion on occluders in the engine's velocity target
+force_halton=1     ; Halton jitter pattern, applied only while output=1
+```
+
+`velocity16` and `velocity_cleanup` also change the velocity data the game's own SMAA 2TX reads. Set both to 0 for a
+completely stock game image. That combination hasn't been tested with Encore yet.
+
+## Uninstall
+
+Delete `dinput8.dll` from `Bin\Win64`. You can also delete `kcd_clarity.ini` and `kcd_clarity.log`.
+
+## Building from source
+
+Needs Visual Studio 2022 (or Build Tools) with the C++ x64 workload; CMake and Ninja come with it. Run `build.cmd`
+from the repository root. The output is `build\dinput8.dll`; NVIDIA's runtime is copied to `build\ngx\rel`.
+`build.cmd dist` also packages a zip. CMake downloads MinHook and the needed DLSS SDK files and checks their hashes.
+
+Offline regression test (software D3D11, does not start the game), from an x64 developer prompt:
+
+```bat
+mkdir build\test
+cd build\test
+cl /nologo /std:c++20 /EHsc /MT /DNOMINMAX /DWIN32_LEAN_AND_MEAN /I..\..\src ..\..\tests\velocity_mask_warp.cpp ..\..\src\renderer\velocity_mask.cpp ..\..\src\renderer\state_backup.cpp /Fe:velocity_mask_warp.exe /link d3d11.lib d3dcompiler.lib
+velocity_mask_warp.exe
+```
+
+## Changes from KCD1 Clarity 0.2.0
+
+- **Crash fix:** stock 0.2.0 crashed at `dinput8.dll` RVA `0x3c200` in the optional velocity cleanup while Encore was
+  generating frames. The velocity cleanup now holds its texture references for the whole pass, defers the reset that
+  Present triggers to the render path, and skips cleanup when resources are missing.
+- **Game AA output:** new `output=0` mode keeps the game's SMAA 2TX image on screen.
+- **Removed:**
+  - The F8/F3 menu and Dear ImGui
+  - The quality modes below native, with all their sub-resolution fixes
+  - The debug canary, frame dumps, mip bias, shadow noise and the D3D debug-layer option
+- **Fewer hooks:** the D3D11 hooks are reduced to seven: CreatePixelShader, PSSetShader, Draw, CreateTexture2D,
+  CreateShaderResourceView, CreateRenderTargetView and OMSetRenderTargets.
+
+For full DLSS with upscaling, use upstream [KCD1 Clarity](https://github.com/eonflux7/kcd1-clarity). The previous
+`main` of this fork (Clarity 0.3.0) is kept under the tag `clarity-0.3.0-main`.
+
+## Credits and license
+
+Based on KCD1 Clarity by its contributors; engine research from their kcd-re notes, which the source comments cite. MIT
+licensed: see [LICENSE](LICENSE). Third-party components keep their own licenses: see [THIRD_PARTY.md](THIRD_PARTY.md).

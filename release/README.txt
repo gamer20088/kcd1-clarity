@@ -1,62 +1,44 @@
-KCD1 Clarity - DLSS for Kingdom Come: Deliverance
-==================================================
+KCD1 Clarity encore-lite - game motion vectors for RTX Encore
+==============================================================
 
-Unofficial mod. Not affiliated with Warhorse Studios or NVIDIA. Uses NVIDIA DLSS.
+Unofficial mod. Not affiliated with Warhorse Studios, NVIDIA or RTX Encore. Uses NVIDIA DLSS.
 
-This is an early version. DLSS at 100% (DLAA) is the most reliable mode. Below 100%
-some effects can still look wrong.
-Please report what you see, with a screenshot and kcd_clarity.log.
+Gives RTX Encore's frame generation Kingdom Come: Deliverance's real motion vectors and
+depth, so Encore shows "Using Game Vectors". By default you still see the game's own
+SMAA 2TX image; a hidden DLAA pass carries the vectors to Encore.
 
 Requirements
 ------------
-- NVIDIA RTX graphics card (RTX 20 series or newer) with a recent driver.
-  AMD and Intel cards: see "AMD / Intel (OptiScaler)" below.
-- Windows, or Linux with Steam's Proton (see "Linux" below).
-- Kingdom Come: Deliverance (the first game), Steam version 1.9.8. Other versions
-  (GOG, older patches) are untested; the mod tells you if it doesn't recognise the game.
+- NVIDIA RTX graphics card.
+- Kingdom Come: Deliverance (the first game), Steam 1.9.8, DirectX 11, native resolution.
+- Options > Video > Anti-aliasing: SMAA 2TX.
+- RTX Encore 2.5.0 with DLSS frame generation on, motion estimation "Game motion vectors",
+  and Encore's own upscaling off.
 
 Install
 -------
-1. Open the game folder (Steam: right-click the game > Manage > Browse local files).
-2. Copy dinput8.dll and nvngx_dlss.dll into Bin\Win64 (next to KingdomCome.exe).
-3. Start the game. In Options > Video, set Anti-aliasing to SMAA 2TX.
-4. Press F8 in game, select DLSS and pick a quality level.
+1. Close the game. Open the game folder (Steam: right-click the game > Manage > Browse
+   local files).
+2. Copy dinput8.dll into Bin\Win64 (next to KingdomCome.exe). Copy nvngx_dlss.dll too
+   only if Bin\Win64 doesn't already have one.
+3. Start the game and load a save. Encore's overlay should show "Using Game Vectors".
 
-Your choices are saved in Bin\Win64\kcd_clarity.ini.
-
-AMD / Intel (OptiScaler) - untested
------------------------------------
-OptiScaler (github.com/optiscaler/OptiScaler) can run FSR or XeSS in place of DLSS.
-Copy OptiScaler.dll into Bin\Win64 renamed to winmm.dll (or version.dll), plus
-OptiScaler.ini. Never use the name dinput8.dll, which is this mod's. In game, pick
-DLSS in F8, then press Insert for OptiScaler's menu to choose the upscaler.
-
-Linux (Steam Proton) - untested
--------------------------------
-Install as above, then set the game's Steam launch options:
-  NVIDIA:      WINEDLLOVERRIDES="dinput8=n,b" PROTON_ENABLE_NVAPI=1 %command%
-  AMD/Intel:   WINEDLLOVERRIDES="dinput8,winmm=n,b" %command%   (with OptiScaler as winmm.dll)
-Without the override Wine uses its own dinput8.dll and the mod doesn't load.
+Settings (Bin\Win64\kcd_clarity.ini)
+------------------------------------
+[general] mode=1    0 = off, 1 = on
+[general] output=0  0 = game's SMAA 2TX on screen, 1 = DLAA on screen
 
 Conflicts
 ---------
-Any other mod that also installs a dinput8.dll (Ultimate ASI Loader, other DLSS or
-ASI mods) will overwrite this one or be overwritten by it. Only one can be installed.
+Any other mod that installs a dinput8.dll (Ultimate ASI Loader, full KCD1 Clarity)
+conflicts with this one. Only one can be installed.
 
 Uninstall
 ---------
-Delete dinput8.dll and nvngx_dlss.dll from Bin\Win64. You can also delete
-kcd_clarity.ini and kcd_clarity.log.
-
-Keys
-----
-F8  settings
-F3  debug window (for bug reports)
-The keys can be changed in kcd_clarity.ini ([ui] toggle_key / debug_key, Windows
-virtual-key codes).
+Delete dinput8.dll from Bin\Win64. Also delete nvngx_dlss.dll if you copied it and
+nothing else uses it, plus kcd_clarity.ini and kcd_clarity.log.
 
 Licenses
 --------
-KCD1 Clarity is MIT licensed. nvngx_dlss.dll is NVIDIA's and covered by the NVIDIA
-license in kcd_clarity_licenses. Source code, updates and bug reports: the GitHub
-repository you downloaded this from (Issues tab).
+MIT licensed. nvngx_dlss.dll is NVIDIA's and covered by the NVIDIA license in
+kcd_clarity_licenses. Source and bug reports: https://github.com/gamer20088/kcd1-clarity
