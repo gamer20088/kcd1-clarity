@@ -66,9 +66,11 @@ completely stock game image. That combination hasn't been tested with Encore yet
 
 On a camera cut (a dialogue shot change, a teleport, a map or menu transition) the game's reprojection still points at
 the previous shot for one frame. Those vectors would make frame generation warp the whole image, text included. With
-`cut_guard=1`, when 65% of the screen or more moves over a quarter of its width in one frame, the vectors for that
-frame are zeroed on the GPU, so Encore blends the two frames instead of warping. Real cuts measured 69–85% in game;
-fast motion such as riding stayed below 65%. Each detected cut is logged in `kcd_clarity.log`.
+`cut_guard=1`, when half of the screen or more moves over a quarter of its width in one frame, coming out of a calm
+frame, the vectors for that frame are zeroed on the GPU, so Encore blends the two frames instead of warping. Fast
+turns (shaking the head, riding) build up over several frames, so when the previous frame already moved fast the
+vectors are kept. Real cuts measured 68–100% in game. Each detected cut, and each fast turn that was let through, is
+logged in `kcd_clarity.log`.
 
 On map, inventory and menu frames the game draws no 3D scene, so there is no DLSS call and Encore would fall back to
 its own motion estimation. With `map_fix=1`, the mod makes a DLSS call with zero motion vectors at the end of those

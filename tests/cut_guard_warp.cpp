@@ -1,6 +1,7 @@
 // Offline test for the camera-cut guard in renderer/taa_dlss.cpp, on the WARP software rasterizer (no game, no GPU).
 // Extracts kPrepareCS and kCutCS from the source, compiles them, and runs both passes on a synthetic frame whose
-// "camera" moved by a given UV offset: small offsets must keep their motion vectors, a cut must zero them.
+// "camera" moved by a given UV offset, frame after frame: small offsets and fast turns that build up over frames
+// must keep their motion vectors, a sudden jump out of a calm frame (a cut) must zero them.
 //
 //   cl /nologo /std:c++20 /EHsc /MT /DNOMINMAX /DWIN32_LEAN_AND_MEAN tests\cut_guard_warp.cpp
 //      /Fe:cut_guard_warp.exe /link d3d11.lib d3dcompiler.lib
@@ -135,6 +136,12 @@ int main(int argc, char** argv) {
     ID3D11ShaderResourceView* cnt_srv = nullptr;
     dev->CreateUnorderedAccessView(cnt, &ud, &cnt_uav);
     dev->CreateShaderResourceView(cnt, &sd, &cnt_srv);
+    D3D11_BUFFER_DESC pd{};
+    pd.ByteWidth = 16;
+    pd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    ID3D11Buffer* prev = nullptr;  // the previous frame's fast count, like g_cut_prev
+    dev->CreateBuffer(&pd, nullptr, &prev);
+    const D3D11_BOX prev_box = {0, 0, 0, 4, 1, 1}, fast_box = {4, 0, 0, 8, 1, 1};
 
     ID3D11Buffer* engine = cbuf(dev, 256 * 16);
     ID3D11Buffer* params = cbuf(dev, 48);
@@ -171,11 +178,13 @@ int main(int argc, char** argv) {
             float cut_mv;
         } p = {0, 1, {1.0f / W, 1.0f / H}, {W, H}, {1, 1}, {1, 1}, 0, 0.25f};
         upload(ctx, params, &p, sizeof(p));
-        const UINT cp[4] = {W, H, static_cast<UINT>(0.65f * W * H), 0};  // kCutFraction
+        const UINT cp[4] = {W, H, static_cast<UINT>(0.5f * W * H),
+                            static_cast<UINT>(0.3f * W * H)};  // kCutFraction, kCutPrevMax
         upload(ctx, cut_params, cp, sizeof(cp));
 
         const UINT zero[4] = {};
         ctx->ClearUnorderedAccessViewUint(cnt_uav, zero);
+        ctx->CopySubresourceRegion(cnt, 0, 8, 0, 0, prev, 0, &prev_box);
         ID3D11ShaderResourceView* srvs[4] = {colour.srv, depth.srv, vel.srv, nullptr};
         ID3D11UnorderedAccessView* uavs[4] = {out_c.uav, out_d.uav, out_mv.uav, cnt_uav};
         ID3D11Buffer* cbs[2] = {engine, params};
@@ -196,6 +205,7 @@ int main(int argc, char** argv) {
         ctx->Dispatch((W + 7) / 8, (H + 7) / 8, 1);
         ctx->CSSetShaderResources(0, 1, ns);
         ctx->CSSetUnorderedAccessViews(0, 1, nu, nullptr);
+        ctx->CopySubresourceRegion(prev, 0, 0, 0, 0, cnt, 0, &fast_box);
 
         ctx->CopyResource(readback, out_mv.tex);
         D3D11_MAPPED_SUBRESOURCE m;
@@ -213,11 +223,17 @@ int main(int argc, char** argv) {
         float offset;
         bool expect_zero;
         const char* what;
-    } cases[] = {{0.0f, true, "still camera"},
+    } cases[] = {{0.0f, true, "still camera"},  // frames run in this order
                  {0.02f, false, "normal camera move"},
                  {0.2f, false, "fast turn below the threshold"},
+                 {0.02f, false, "calm again"},
                  {0.6f, true, "camera cut"},
-                 {0.02f, false, "normal move right after a cut"}};
+                 {0.02f, false, "normal move right after a cut"},
+                 {0.15f, false, "head shake starts"},
+                 {0.3f, false, "head shake, very fast"},
+                 {0.6f, false, "head shake, faster still"},
+                 {0.0f, true, "still"},
+                 {0.4f, true, "second cut"}};
     int failures = 0;
     for (const Case& c : cases) {
         float mv = run(c.offset);
@@ -230,6 +246,6 @@ int main(int argc, char** argv) {
         printf("FAIL: %d case(s)\n", failures);
         return 1;
     }
-    printf("PASS: prepare and cut-guard shaders compile; vectors kept on normal motion, zeroed on a cut.\n");
+    printf("PASS: prepare and cut-guard shaders compile; vectors kept on normal and fast motion, zeroed on a cut.\n");
     return 0;
 }

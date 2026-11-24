@@ -46,7 +46,7 @@ cbuffer Params : register(b1) {
 RWTexture2D<float4> OutColour : register(u0);
 RWTexture2D<float>  OutDepth  : register(u1);
 RWTexture2D<float2> OutMv     : register(u2);
-RWByteAddressBuffer CutCount  : register(u3);  // pixels over CutMv this frame (cleared before the dispatch)
+RWByteAddressBuffer CutCount  : register(u3);  // [0] pixels over CutMv, [1] over CutMv / 2 (this frame)
 
 float2 DecodeMotionVector(float2 e) {
     e = (e - 127.0 / 255.0) * 2.0;
@@ -54,22 +54,31 @@ float2 DecodeMotionVector(float2 e) {
 }
 
 groupshared uint g_cut;
+groupshared uint g_fast;
 
 float2 prepare(uint2 id);
 
 [numthreads(8, 8, 1)]
 void main(uint2 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
-    if (gi == 0)
+    if (gi == 0) {
         g_cut = 0;
+        g_fast = 0;
+    }
     GroupMemoryBarrierWithGroupSync();
     if (all(id < RenderSize)) {
         float2 mv = prepare(id);
-        if (CutMv > 0.0 && dot(mv, mv) > CutMv * CutMv)
-            InterlockedAdd(g_cut, 1);
+        float m2 = dot(mv, mv);
+        if (CutMv > 0.0 && m2 > 0.25 * CutMv * CutMv) {
+            InterlockedAdd(g_fast, 1);
+            if (m2 > CutMv * CutMv)
+                InterlockedAdd(g_cut, 1);
+        }
     }
     GroupMemoryBarrierWithGroupSync();
     if (gi == 0 && g_cut > 0)
         CutCount.InterlockedAdd(0, g_cut);
+    if (gi == 0 && g_fast > 0)
+        CutCount.InterlockedAdd(4, g_fast);
 }
 
 // Writes the outputs for one pixel and returns its motion vector (before MvSign).
@@ -106,15 +115,17 @@ float2 prepare(uint2 id) {
 // Camera-cut guard, second pass: when most of the screen "moved" more than CutMv in one frame, the engine's
 // reprojection points at the previous shot (dialogue cut, teleport, map or menu transition). Those vectors are
 // garbage and make frame generation warp the whole image, text included; zero vectors make it blend instead.
+// A cut comes out of nowhere: the frame before it was calm. A fast turn (shaking the head, riding) builds up over
+// frames, so when the previous frame already moved fast, the vectors are real and are kept.
 static const char kCutCS[] = R"(
-ByteAddressBuffer CutCount : register(t0);
+ByteAddressBuffer CutCount : register(t0);  // [0] pixels over CutMv, [2] pixels over CutMv / 2 in the previous frame
 RWTexture2D<float2> Mv : register(u0);
-cbuffer Params : register(b0) { uint2 Size; uint Threshold; uint Pad; };
+cbuffer Params : register(b0) { uint2 Size; uint Threshold; uint PrevMax; };
 [numthreads(8, 8, 1)]
 void main(uint2 id : SV_DispatchThreadID) {
     if (any(id >= Size))
         return;
-    if (CutCount.Load(0) > Threshold)
+    if (CutCount.Load(0) > Threshold && CutCount.Load(8) <= PrevMax)
         Mv[id] = float2(0.0, 0.0);
 }
 )";
@@ -145,18 +156,20 @@ static bool g_shaders_failed;
 
 // Camera-cut guard resources.
 constexpr float kCutMotion = 0.25f;   // UV per frame: a quarter of the screen in one frame
-constexpr float kCutFraction = 0.65f;  // share of the screen that must exceed it (real cuts: 69-85% in game;
-                                       // 50-62% was fast motion such as riding)
+constexpr float kCutFraction = 0.5f;   // share of the screen that must exceed it (real cuts: 68-100% in game)
+constexpr float kCutPrevMax = 0.3f;    // and at most this share moved over half of kCutMotion the frame before
+                                       // (fast turns and riding reached 50-74% while already moving fast)
 constexpr int kCutRing = 3;           // staging copies, read back a couple of frames late (log only)
 static ID3D11ComputeShader* g_cut_cs;
 static ID3D11Buffer* g_cut_params;
 static ID3D11Buffer* g_cut_buf;
+static ID3D11Buffer* g_cut_prev;  // [0] = g_cut_buf[1] of the previous frame
 static ID3D11ShaderResourceView* g_cut_srv;
 static ID3D11UnorderedAccessView* g_cut_uav;
 static ID3D11Buffer* g_cut_staging[kCutRing];
 static bool g_cut_staged[kCutRing];
 static int g_cut_next;
-static uint64_t g_cut_frames, g_cut_logged_at;
+static uint64_t g_cut_frames, g_cut_logged_at, g_cut_kept, g_cut_kept_logged_at;
 
 static bool make_cut_resources(ID3D11Device* device) {
     D3D11_BUFFER_DESC bd{};
@@ -165,6 +178,12 @@ static bool make_cut_resources(ID3D11Device* device) {
     bd.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
     bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
     if (FAILED(device->CreateBuffer(&bd, nullptr, &g_cut_buf)))
+        return false;
+    D3D11_BUFFER_DESC pd{};
+    pd.ByteWidth = 16;
+    pd.Usage = D3D11_USAGE_DEFAULT;
+    pd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    if (FAILED(device->CreateBuffer(&pd, nullptr, &g_cut_prev)))
         return false;
     D3D11_UNORDERED_ACCESS_VIEW_DESC ud{};
     ud.Format = DXGI_FORMAT_R32_TYPELESS;
@@ -488,6 +507,8 @@ bool on_taa_draw(ID3D11DeviceContext* ctx, const d3d11::TaaShader& taa) {
         ID3D11Buffer* cbs[2] = {b.cb, g_params};
         const UINT zero[4] = {};
         ctx->ClearUnorderedAccessViewUint(g_cut_uav, zero);
+        const D3D11_BOX prev_box = {0, 0, 0, 4, 1, 1}, fast_box = {4, 0, 0, 8, 1, 1};
+        ctx->CopySubresourceRegion(g_cut_buf, 0, 8, 0, 0, g_cut_prev, 0, &prev_box);
         ctx->CSSetShader(g_prepare_cs, nullptr, 0);
         ctx->CSSetShaderResources(0, 4, srvs);
         ctx->CSSetUnorderedAccessViews(0, 4, uavs, nullptr);
@@ -502,7 +523,8 @@ bool on_taa_draw(ID3D11DeviceContext* ctx, const d3d11::TaaShader& taa) {
 
         // 1b. Camera-cut guard: zero the vectors when most of the screen jumped (decided on the GPU, same frame).
         if (g_settings.cut_guard && SUCCEEDED(ctx->Map(g_cut_params, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
-            const UINT cp[4] = {w, h, static_cast<UINT>(kCutFraction * w * h), 0};
+            const UINT cp[4] = {w, h, static_cast<UINT>(kCutFraction * w * h),
+                                static_cast<UINT>(kCutPrevMax * w * h)};
             memcpy(m.pData, cp, sizeof(cp));
             ctx->Unmap(g_cut_params, 0);
             ctx->CSSetShader(g_cut_cs, nullptr, 0);
@@ -513,6 +535,7 @@ bool on_taa_draw(ID3D11DeviceContext* ctx, const d3d11::TaaShader& taa) {
             ctx->CSSetShaderResources(0, 1, null_srvs);
             ctx->CSSetUnorderedAccessViews(0, 1, null_uavs, nullptr);
             ctx->CSSetConstantBuffers(0, 1, null_cbs);
+            ctx->CopySubresourceRegion(g_cut_prev, 0, 0, 0, 0, g_cut_buf, 0, &fast_box);
             // Log only: read the count back a couple of frames late, never waiting on the GPU.
             ctx->CopyResource(g_cut_staging[g_cut_next], g_cut_buf);
             g_cut_staged[g_cut_next] = true;
@@ -520,14 +543,25 @@ bool on_taa_draw(ID3D11DeviceContext* ctx, const d3d11::TaaShader& taa) {
             if (g_cut_staged[g_cut_next]) {
                 D3D11_MAPPED_SUBRESOURCE rb;
                 if (SUCCEEDED(ctx->Map(g_cut_staging[g_cut_next], 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &rb))) {
-                    UINT count = *static_cast<const UINT*>(rb.pData);
+                    const UINT* c = static_cast<const UINT*>(rb.pData);
+                    const UINT count = c[0], prev_fast = c[2];
                     ctx->Unmap(g_cut_staging[g_cut_next], 0);
                     g_cut_staged[g_cut_next] = false;
-                    if (count > cp[2]) {
+                    const double px = static_cast<double>(w) * h;
+                    if (count > cp[2] && prev_fast > cp[3]) {
+                        ++g_cut_kept;
+                        if (g_status.frames - g_cut_kept_logged_at > 300 || g_cut_kept_logged_at == 0) {
+                            logf("taa_dlss: fast camera motion, not a cut, vectors kept (%.0f%% jumped, %.0f%% already "
+                                 "fast the frame before; %llu so far)",
+                                 100.0 * count / px, 100.0 * prev_fast / px, g_cut_kept);
+                            g_cut_kept_logged_at = g_status.frames;
+                        }
+                    } else if (count > cp[2]) {
                         ++g_cut_frames;
                         if (g_status.frames - g_cut_logged_at > 30 || g_cut_logged_at == 0) {
-                            logf("taa_dlss: camera cut, motion vectors zeroed (%.0f%% of the screen jumped; %llu so far)",
-                                 100.0 * count / (static_cast<double>(w) * h), g_cut_frames);
+                            logf("taa_dlss: camera cut, motion vectors zeroed (%.0f%% of the screen jumped, %.0f%% "
+                                 "fast the frame before; %llu so far)",
+                                 100.0 * count / px, 100.0 * prev_fast / px, g_cut_frames);
                             g_cut_logged_at = g_status.frames;
                         }
                     }
