@@ -56,6 +56,7 @@ velocity16=1       ; object motion vectors at 16 bits (restart to change)
 velocity_cleanup=1 ; camera motion on occluders in the engine's velocity target
 force_halton=1     ; Halton jitter pattern, applied only while output=1
 cut_guard=1        ; zero the motion vectors on camera cuts
+map_fix=1          ; zero motion vectors to Encore on map and menu frames
 ```
 
 `velocity16` and `velocity_cleanup` also change the velocity data the game's own SMAA 2TX reads. Set both to 0 for a
@@ -65,13 +66,19 @@ completely stock game image. That combination hasn't been tested with Encore yet
 
 On a camera cut (a dialogue shot change, a teleport, a map or menu transition) the game's reprojection still points at
 the previous shot for one frame. Those vectors would make frame generation warp the whole image, text included. With
-`cut_guard=1`, when more than half the screen moves over a quarter of its width in one frame, the vectors for that
-frame are zeroed on the GPU, so Encore blends the two frames instead of warping. Each detected cut is logged in
-`kcd_clarity.log`. The log also records when the game stops and resumes drawing its 3D scene (map, menus,
-loading); those frames have no DLSS call, so Encore uses its own motion estimation.
+`cut_guard=1`, when 65% of the screen or more moves over a quarter of its width in one frame, the vectors for that
+frame are zeroed on the GPU, so Encore blends the two frames instead of warping. Real cuts measured 69–85% in game;
+fast motion such as riding stayed below 65%. Each detected cut is logged in `kcd_clarity.log`.
+
+On map, inventory and menu frames the game draws no 3D scene, so there is no DLSS call and Encore would fall back to
+its own motion estimation. With `map_fix=1`, the mod makes a DLSS call with zero motion vectors at the end of those
+frames (the engine's `RT_EndFrame`, on the render thread), so Encore keeps using game vectors. Frames with a 3D scene
+are not touched. The log records when the 3D scene stops and resumes.
 
 Text over a moving scene can still ghost slightly. Encore's fix for that, UI recomposition, needs the scene and the
 interface as separate layers, which Encore 2.5.0 only accepts on DirectX 12 or through DLSS frame-generation inputs.
+Requested for DirectX 11 in [SilyNoMeta/rtx-encore#137](https://github.com/SilyNoMeta/rtx-encore/issues/137).
+Zeroing the vectors under the interface was tried and looked much worse.
 In Encore, **Frame rate > Protection tuning > Classic** may also reduce artifacts that the default *Refined* leaves.
 
 ## Uninstall
@@ -105,6 +112,7 @@ checks that vectors are kept on normal and fast camera motion and zeroed on a cu
   Present triggers to the render path, and skips cleanup when resources are missing.
 - **Game AA output:** new `output=0` mode keeps the game's SMAA 2TX image on screen.
 - **Camera-cut guard:** zeroes the motion vectors on frames where the camera jumps (see above).
+- **Map fix:** zero motion vectors to Encore on frames without a 3D scene (see above).
 - **Removed:**
   - The F8/F3 menu and Dear ImGui
   - The quality modes below native, with all their sub-resolution fixes
