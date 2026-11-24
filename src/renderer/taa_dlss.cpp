@@ -41,20 +41,39 @@ cbuffer Params : register(b1) {
     float2 MvSign;
     float2 Scale;      // render size / target size: the sub-rect the scene occupies
     uint  VelMask;     // VelDepth is valid: object velocity only where the depth is still the moving object's
+    float CutMv;       // camera-cut guard: count pixels moving more than this (UV units per frame); 0 = off
 };
 RWTexture2D<float4> OutColour : register(u0);
 RWTexture2D<float>  OutDepth  : register(u1);
 RWTexture2D<float2> OutMv     : register(u2);
+RWByteAddressBuffer CutCount  : register(u3);  // pixels over CutMv this frame (cleared before the dispatch)
 
 float2 DecodeMotionVector(float2 e) {
     e = (e - 127.0 / 255.0) * 2.0;
     return (e * e) * float2(e.x > 0.0 ? 1.0 : -1.0, e.y > 0.0 ? 1.0 : -1.0);
 }
 
+groupshared uint g_cut;
+
+float2 prepare(uint2 id);
+
 [numthreads(8, 8, 1)]
-void main(uint2 id : SV_DispatchThreadID) {
-    if (any(id >= RenderSize))
-        return;
+void main(uint2 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+    if (gi == 0)
+        g_cut = 0;
+    GroupMemoryBarrierWithGroupSync();
+    if (all(id < RenderSize)) {
+        float2 mv = prepare(id);
+        if (CutMv > 0.0 && dot(mv, mv) > CutMv * CutMv)
+            InterlockedAdd(g_cut, 1);
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (gi == 0 && g_cut > 0)
+        CutCount.InterlockedAdd(0, g_cut);
+}
+
+// Writes the outputs for one pixel and returns its motion vector (before MvSign).
+float2 prepare(uint2 id) {
     int3 p = int3(id, 0);
     float depth = InDepth.Load(p);
     float2 tc = (float2(id) + 0.5) * InvTarget;
@@ -80,6 +99,23 @@ void main(uint2 id : SV_DispatchThreadID) {
     OutMv[id] = mv * MvSign;
     OutDepth[id] = clamp(depth, 1e-6, 1.0 - 1e-6);  // reversed Z: the sky is exactly 0
     OutColour[id] = InColour.Load(p);
+    return mv;
+}
+)";
+
+// Camera-cut guard, second pass: when most of the screen "moved" more than CutMv in one frame, the engine's
+// reprojection points at the previous shot (dialogue cut, teleport, map or menu transition). Those vectors are
+// garbage and make frame generation warp the whole image, text included; zero vectors make it blend instead.
+static const char kCutCS[] = R"(
+ByteAddressBuffer CutCount : register(t0);
+RWTexture2D<float2> Mv : register(u0);
+cbuffer Params : register(b0) { uint2 Size; uint Threshold; uint Pad; };
+[numthreads(8, 8, 1)]
+void main(uint2 id : SV_DispatchThreadID) {
+    if (any(id >= Size))
+        return;
+    if (CutCount.Load(0) > Threshold)
+        Mv[id] = float2(0.0, 0.0);
 }
 )";
 
@@ -107,6 +143,58 @@ static ID3D11PixelShader* g_writeback_ps;
 static ID3D11Buffer* g_params;
 static bool g_shaders_failed;
 
+// Camera-cut guard resources.
+constexpr float kCutMotion = 0.25f;   // UV per frame: a quarter of the screen in one frame
+constexpr float kCutFraction = 0.5f;  // share of the screen that must exceed it
+constexpr int kCutRing = 3;           // staging copies, read back a couple of frames late (log only)
+static ID3D11ComputeShader* g_cut_cs;
+static ID3D11Buffer* g_cut_params;
+static ID3D11Buffer* g_cut_buf;
+static ID3D11ShaderResourceView* g_cut_srv;
+static ID3D11UnorderedAccessView* g_cut_uav;
+static ID3D11Buffer* g_cut_staging[kCutRing];
+static bool g_cut_staged[kCutRing];
+static int g_cut_next;
+static uint64_t g_cut_frames, g_cut_logged_at;
+
+static bool make_cut_resources(ID3D11Device* device) {
+    D3D11_BUFFER_DESC bd{};
+    bd.ByteWidth = 16;
+    bd.Usage = D3D11_USAGE_DEFAULT;
+    bd.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+    bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+    if (FAILED(device->CreateBuffer(&bd, nullptr, &g_cut_buf)))
+        return false;
+    D3D11_UNORDERED_ACCESS_VIEW_DESC ud{};
+    ud.Format = DXGI_FORMAT_R32_TYPELESS;
+    ud.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+    ud.Buffer.NumElements = 4;
+    ud.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+    D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+    sd.Format = DXGI_FORMAT_R32_TYPELESS;
+    sd.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
+    sd.BufferEx.NumElements = 4;
+    sd.BufferEx.Flags = D3D11_BUFFEREX_SRV_FLAG_RAW;
+    if (FAILED(device->CreateUnorderedAccessView(g_cut_buf, &ud, &g_cut_uav)) ||
+        FAILED(device->CreateShaderResourceView(g_cut_buf, &sd, &g_cut_srv)))
+        return false;
+    D3D11_BUFFER_DESC cb{};
+    cb.ByteWidth = 16;
+    cb.Usage = D3D11_USAGE_DYNAMIC;
+    cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    cb.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    if (FAILED(device->CreateBuffer(&cb, nullptr, &g_cut_params)))
+        return false;
+    D3D11_BUFFER_DESC st{};
+    st.ByteWidth = 16;
+    st.Usage = D3D11_USAGE_STAGING;
+    st.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    for (ID3D11Buffer*& s : g_cut_staging)
+        if (FAILED(device->CreateBuffer(&st, nullptr, &s)))
+            return false;
+    return true;
+}
+
 static ID3DBlob* compile(const char* src, size_t len, const char* target, const char* name) {
     ID3DBlob* code = nullptr;
     ID3DBlob* errors = nullptr;
@@ -127,13 +215,16 @@ static bool ensure_shaders(ID3D11Device* device) {
     ID3DBlob* cs = compile(kPrepareCS, sizeof(kPrepareCS) - 1, "cs_5_0", "kcd_prepare_cs");
     ID3DBlob* vs = compile(kWritebackVS, sizeof(kWritebackVS) - 1, "vs_5_0", "kcd_writeback_vs");
     ID3DBlob* ps = compile(kWritebackPS, sizeof(kWritebackPS) - 1, "ps_5_0", "kcd_writeback_ps");
-    bool ok = cs && vs && ps &&
+    ID3DBlob* cut = compile(kCutCS, sizeof(kCutCS) - 1, "cs_5_0", "kcd_cut_cs");
+    bool ok = cs && vs && ps && cut &&
               SUCCEEDED(device->CreateComputeShader(cs->GetBufferPointer(), cs->GetBufferSize(), nullptr, &g_prepare_cs)) &&
               SUCCEEDED(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &g_writeback_vs)) &&
-              SUCCEEDED(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &g_writeback_ps));
-    for (ID3DBlob* b : {cs, vs, ps})
+              SUCCEEDED(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &g_writeback_ps)) &&
+              SUCCEEDED(device->CreateComputeShader(cut->GetBufferPointer(), cut->GetBufferSize(), nullptr, &g_cut_cs));
+    for (ID3DBlob* b : {cs, vs, ps, cut})
         if (b)
             b->Release();
+    ok = ok && make_cut_resources(device);
 
     D3D11_BUFFER_DESC bd{};
     bd.ByteWidth = 48;
@@ -196,7 +287,24 @@ static bool ensure_textures(ID3D11Device* device, UINT w, UINT h) {
 
 // ---------------------------------------------------------------------------------------------------------
 
+static uint64_t g_taa_draws_seen;  // TAA draws since start (render thread)
+
 void on_present() {
+    // Log when the game stops drawing its 3D scene (map, menus, loading) and when it resumes. On those frames there
+    // is no DLSS call, so Encore has no game vectors and falls back to its own motion estimation.
+    static uint64_t last_draws, presents_without;
+    static bool paused;
+    if (g_taa_draws_seen != last_draws) {
+        if (paused)
+            logf("taa_dlss: 3D scene resumed after %llu presents without it", presents_without);
+        last_draws = g_taa_draws_seen;
+        presents_without = 0;
+        paused = false;
+    } else if (++presents_without == 6 && g_settings.mode == Mode::On) {
+        paused = true;  // 6 presents: about 3 real frames at 2x frame generation
+        logf("taa_dlss: 3D scene stopped (map, menu or loading?); no game vectors for Encore until it resumes");
+    }
+
     // Halton only matters when the DLAA image is what you see; with the game's SMAA 2TX on screen keep its pattern.
     static int saved_pattern = -1;
     int* p = sym::ptr<int>(sym::Id::CV_r_AntialiasingTAAPattern);
@@ -247,6 +355,7 @@ static float read_float(uintptr_t base, uintptr_t offset) {
 }
 
 bool on_taa_draw(ID3D11DeviceContext* ctx, const d3d11::TaaShader& taa) {
+    ++g_taa_draws_seen;
     if (g_settings.mode != Mode::On)
         return false;
 
@@ -310,12 +419,12 @@ bool on_taa_draw(ID3D11DeviceContext* ctx, const d3d11::TaaShader& taa) {
         float mv_sign[2];
         float scale[2];
         UINT vel_mask;
-        float pad;
+        float cut_mv;
     } params = {taa.reproj_offset / 16, taa.reproj_row_major ? 1u : 0u,
                 {1.0f / w, 1.0f / h}, {w, h},
                 {g_settings.mv_flip_x ? -1.0f : 1.0f, g_settings.mv_flip_y ? -1.0f : 1.0f},
                 {1.0f, 1.0f},
-                vel_depth ? 1u : 0u, 0};
+                vel_depth ? 1u : 0u, g_settings.cut_guard ? kCutMotion : 0.0f};
     memcpy(m.pData, &params, sizeof(params));
     ctx->Unmap(g_params, 0);
 
@@ -338,19 +447,56 @@ bool on_taa_draw(ID3D11DeviceContext* ctx, const d3d11::TaaShader& taa) {
 
         // 1. Colour/depth copies and full-screen motion vectors.
         ID3D11ShaderResourceView* srvs[4] = {b.colour, b.depth, b.velocity, vel_depth.Get()};
-        ID3D11UnorderedAccessView* uavs[3] = {g_colour.uav, g_depth.uav, g_mv.uav};
+        ID3D11UnorderedAccessView* uavs[4] = {g_colour.uav, g_depth.uav, g_mv.uav, g_cut_uav};
         ID3D11Buffer* cbs[2] = {b.cb, g_params};
+        const UINT zero[4] = {};
+        ctx->ClearUnorderedAccessViewUint(g_cut_uav, zero);
         ctx->CSSetShader(g_prepare_cs, nullptr, 0);
         ctx->CSSetShaderResources(0, 4, srvs);
-        ctx->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
+        ctx->CSSetUnorderedAccessViews(0, 4, uavs, nullptr);
         ctx->CSSetConstantBuffers(0, 2, cbs);
         ctx->Dispatch((w + 7) / 8, (h + 7) / 8, 1);
         ID3D11ShaderResourceView* null_srvs[4] = {};
-        ID3D11UnorderedAccessView* null_uavs[3] = {};
+        ID3D11UnorderedAccessView* null_uavs[4] = {};
         ID3D11Buffer* null_cbs[2] = {};
         ctx->CSSetShaderResources(0, 4, null_srvs);
-        ctx->CSSetUnorderedAccessViews(0, 3, null_uavs, nullptr);
+        ctx->CSSetUnorderedAccessViews(0, 4, null_uavs, nullptr);
         ctx->CSSetConstantBuffers(0, 2, null_cbs);
+
+        // 1b. Camera-cut guard: zero the vectors when most of the screen jumped (decided on the GPU, same frame).
+        if (g_settings.cut_guard && SUCCEEDED(ctx->Map(g_cut_params, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+            const UINT cp[4] = {w, h, static_cast<UINT>(kCutFraction * w * h), 0};
+            memcpy(m.pData, cp, sizeof(cp));
+            ctx->Unmap(g_cut_params, 0);
+            ctx->CSSetShader(g_cut_cs, nullptr, 0);
+            ctx->CSSetShaderResources(0, 1, &g_cut_srv);
+            ctx->CSSetUnorderedAccessViews(0, 1, &g_mv.uav, nullptr);
+            ctx->CSSetConstantBuffers(0, 1, &g_cut_params);
+            ctx->Dispatch((w + 7) / 8, (h + 7) / 8, 1);
+            ctx->CSSetShaderResources(0, 1, null_srvs);
+            ctx->CSSetUnorderedAccessViews(0, 1, null_uavs, nullptr);
+            ctx->CSSetConstantBuffers(0, 1, null_cbs);
+            // Log only: read the count back a couple of frames late, never waiting on the GPU.
+            ctx->CopyResource(g_cut_staging[g_cut_next], g_cut_buf);
+            g_cut_staged[g_cut_next] = true;
+            g_cut_next = (g_cut_next + 1) % kCutRing;
+            if (g_cut_staged[g_cut_next]) {
+                D3D11_MAPPED_SUBRESOURCE rb;
+                if (SUCCEEDED(ctx->Map(g_cut_staging[g_cut_next], 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &rb))) {
+                    UINT count = *static_cast<const UINT*>(rb.pData);
+                    ctx->Unmap(g_cut_staging[g_cut_next], 0);
+                    g_cut_staged[g_cut_next] = false;
+                    if (count > cp[2]) {
+                        ++g_cut_frames;
+                        if (g_status.frames - g_cut_logged_at > 30 || g_cut_logged_at == 0) {
+                            logf("taa_dlss: camera cut, motion vectors zeroed (%.0f%% of the screen jumped; %llu so far)",
+                                 100.0 * count / (static_cast<double>(w) * h), g_cut_frames);
+                            g_cut_logged_at = g_status.frames;
+                        }
+                    }
+                }
+            }
+        }
 
         // 2. DLAA. This NGX call is what RTX Encore reads the motion vectors and depth from.
         dlss::EvalInputs in;

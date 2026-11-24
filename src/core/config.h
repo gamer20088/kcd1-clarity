@@ -15,6 +15,7 @@ struct Config {
     bool velocity16 = true;    // [dlss] velocity16: object motion vectors at 16 bits (restart to change)
     bool velocity_cleanup = true;  // [dlss] velocity_cleanup: camera motion on occluders (velocity_mask)
     bool force_halton = true;  // [dlss] force_halton: r_AntialiasingTAAPattern 8, only while output = 1
+    bool cut_guard = true;     // [dlss] cut_guard: zero the motion vectors on camera cuts
 };
 
 Config& config();

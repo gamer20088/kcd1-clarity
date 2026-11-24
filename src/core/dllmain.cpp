@@ -65,6 +65,7 @@ static DWORD WINAPI init_thread(LPVOID) {
     taa_dlss::settings().mode = static_cast<taa_dlss::Mode>(config().mode);
     taa_dlss::settings().output = static_cast<taa_dlss::Output>(config().output);
     taa_dlss::settings().force_halton = config().force_halton;
+    taa_dlss::settings().cut_guard = config().cut_guard;
     velocity_format::set_enabled(config().velocity16);
     velocity_mask::set_enabled(config().velocity_cleanup);
 

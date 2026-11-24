@@ -20,9 +20,10 @@ void config_load(const std::wstring& path) {
     g_config.velocity16 = GetPrivateProfileIntW(L"dlss", L"velocity16", g_config.velocity16, f) != 0;
     g_config.velocity_cleanup = GetPrivateProfileIntW(L"dlss", L"velocity_cleanup", g_config.velocity_cleanup, f) != 0;
     g_config.force_halton = GetPrivateProfileIntW(L"dlss", L"force_halton", g_config.force_halton, f) != 0;
-    logf("config: %ls: mode %d, output %s, preset %d, velocity16 %d, velocity_cleanup %d, force_halton %d", f,
+    g_config.cut_guard = GetPrivateProfileIntW(L"dlss", L"cut_guard", g_config.cut_guard, f) != 0;
+    logf("config: %ls: mode %d, output %s, preset %d, velocity16 %d, velocity_cleanup %d, force_halton %d, cut_guard %d", f,
          g_config.mode, g_config.output ? "dlaa" : "game", g_config.dlss_preset, g_config.velocity16,
-         g_config.velocity_cleanup, g_config.force_halton);
+         g_config.velocity_cleanup, g_config.force_halton, g_config.cut_guard);
     config_save();
 }
 
@@ -36,6 +37,7 @@ void config_save() {
     WritePrivateProfileStringW(L"dlss", L"velocity16", g_config.velocity16 ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"dlss", L"velocity_cleanup", g_config.velocity_cleanup ? L"1" : L"0", f);
     WritePrivateProfileStringW(L"dlss", L"force_halton", g_config.force_halton ? L"1" : L"0", f);
+    WritePrivateProfileStringW(L"dlss", L"cut_guard", g_config.cut_guard ? L"1" : L"0", f);
 }
 
 }  // namespace kc

@@ -26,6 +26,7 @@ struct Settings {
     Mode mode = Mode::On;
     Output output = Output::Game;
     bool force_halton = true;   // r_AntialiasingTAAPattern 8 (Halton 2,3) while output = Dlaa
+    bool cut_guard = true;      // zero the motion vectors on camera cuts (most of the screen jumps at once)
     bool jitter_flip_x = true;  // confirmed in game 2026-10-15: DLSS jitter = (-x, +y) of gRenDev+0xF20
     bool jitter_flip_y = false;
     bool mv_flip_x = false;
