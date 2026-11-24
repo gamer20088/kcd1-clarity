@@ -6,13 +6,10 @@
 // Device/context-level hooks in d3d11.dll (shared by every device created with the same flags):
 //   CreatePixelShader: recognizes the engine's TAA resolve (PostAA.cfx PostAA_PS, 2TX path) by its reflection.
 //   PSSetShader:       tracks the bound pixel shader.
-//   PSSetSamplers:     renderer/mip_bias swaps in LOD-biased samplers below render scale 1.
-//   Draw:              when the TAA shader draws, renderer/taa_dlss may replace the draw.
-//   CreateComputeShader / CSSetShader / Dispatch: renderer/screen_size_fix patches the tiled shading CS.
+//   Draw:              at the TAA draw, renderer/taa_dlss runs (and, with output = DLAA, replaces the draw).
 //   CreateTexture2D / CreateShaderResourceView / CreateRenderTargetView: renderer/velocity_format (16-bit motion
-//                      vectors) and renderer/shadow_noise (updatable shadow rotation noise).
-//   All non-indirect draws, Dispatch, OMSetRenderTargets[AndUnorderedAccessViews]: renderer/canary (edge clamp
-//                      or debug fill outside the sub-rect).
+//                      vectors).
+//   OMSetRenderTargets: renderer/velocity_mask (velocity cleanup and its depth snapshot).
 namespace kc::d3d11 {
 
 // What the TAA pixel shader expects where, read from its reflection when it is created.

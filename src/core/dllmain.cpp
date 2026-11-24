@@ -14,17 +14,15 @@
 
 #include "core/config.h"
 #include "core/crash.h"
-#include "core/d3d_debug.h"
 #include "core/log.h"
 #include "core/proxy.h"
 #include "core/state.h"
-#include "game/renderer.h"
 #include "game/symbols.h"
 #include "hooks/d3d11_hooks.h"
 #include "hooks/present.h"
-#include "renderer/canary.h"
 #include "renderer/taa_dlss.h"
 #include "renderer/velocity_format.h"
+#include "renderer/velocity_mask.h"
 
 namespace kc {
 
@@ -59,23 +57,16 @@ static DWORD WINAPI init_thread(LPVOID) {
     std::wstring dir = self_dir();
     g_state.mod_dir = dir;
     log_open(dir + L"kcd_clarity.log");
-    logf("kcd-clarity %s, pid %lu", KC_VERSION, GetCurrentProcessId());
+    logf("kcd-clarity encore-lite %s, pid %lu", KC_VERSION, GetCurrentProcessId());
     g_state.wine_version = wine_version();
     if (!g_state.wine_version.empty())
         logf("running under Wine %s (Proton)", g_state.wine_version.c_str());
     config_load(dir + L"kcd_clarity.ini");
     taa_dlss::settings().mode = static_cast<taa_dlss::Mode>(config().mode);
-    taa_dlss::settings().skip_ngx = config().skip_ngx;
-    taa_dlss::settings().engine_after = config().engine_after;
+    taa_dlss::settings().output = static_cast<taa_dlss::Output>(config().output);
     taa_dlss::settings().force_halton = config().force_halton;
-    taa_dlss::settings().state_swap = config().state_swap;
-    taa_dlss::settings().render_scale = render_scale_for(config().dlss_quality);
-    taa_dlss::settings().mip_bias = config().mip_bias;
-    taa_dlss::settings().mip_bias_offset = config().mip_bias_offset;
-    taa_dlss::settings().temporal_shadow_noise = config().temporal_shadow_noise;
-    taa_dlss::settings().coarse_shadow_noise = config().coarse_shadow_noise;
-    canary::settings().clamp = config().edge_clamp;
     velocity_format::set_enabled(config().velocity16);
+    velocity_mask::set_enabled(config().velocity_cleanup);
 
     if (MH_Initialize() != MH_OK) {
         logf("MH_Initialize failed");
@@ -88,13 +79,11 @@ static DWORD WINAPI init_thread(LPVOID) {
     logf("d3d11.dll loaded after %llu ms", GetTickCount64() - start);
 
     sym::resolve_all();
-    game::install_hooks();
     g_state.game_base = sym::status().module_base;
     g_state.game_timestamp = sym::status().module_timestamp;
 
     g_state.hooks_installed = install_present_hooks();
     d3d11::install();  // before the game creates its shaders
-    d3d_debug::install();  // before the game creates its device
     // Installed last: the game may raise and handle its own exceptions during startup.
     install_crash_logger();
     logf("crash logger installed");

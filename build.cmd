@@ -24,7 +24,6 @@ copy /y "%ROOT%build\ngx\rel\nvngx_dlss.dll" "%STAGE%\" >nul || exit /b 1
 copy /y "%ROOT%release\README.txt" "%STAGE%\kcd_clarity_readme.txt" >nul || exit /b 1
 set "LIC=%STAGE%\kcd_clarity_licenses"
 copy /y "%ROOT%LICENSE" "%LIC%\kcd-clarity.txt" >nul || exit /b 1
-copy /y "%ROOT%build\_deps\imgui-src\LICENSE.txt" "%LIC%\dear-imgui.txt" >nul || exit /b 1
 copy /y "%ROOT%build\_deps\minhook-src\LICENSE.txt" "%LIC%\minhook.txt" >nul || exit /b 1
 for /d %%d in ("%ROOT%build\dlss-sdk-*") do copy /y "%%d\LICENSE.txt" "%LIC%\nvidia-dlss-sdk.txt" >nul || exit /b 1
 if not exist "%ROOT%dist" mkdir "%ROOT%dist"

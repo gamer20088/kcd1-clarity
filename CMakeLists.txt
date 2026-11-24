@@ -11,15 +11,11 @@ set(CMAKE_POLICY_DEFAULT_CMP0135 NEW)
 
 include(FetchContent)
 # SOURCE_SUBDIR points at a missing dir so FetchContent only downloads; targets are defined below.
-FetchContent_Declare(imgui
-    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.5.tar.gz
-    URL_HASH SHA256=2aa2d169c569368439e5d5667e0796d09ca5cc6432965ce082e516937d7db254
-    SOURCE_SUBDIR _no_cmake)
 FetchContent_Declare(minhook
     URL https://github.com/TsudaKageyu/minhook/archive/refs/tags/v1.3.3.tar.gz
     URL_HASH SHA256=5bec16358ec9086d4593124bf558635e89135abea2c76e5761ecaf09f4546b19
     SOURCE_SUBDIR _no_cmake)
-FetchContent_MakeAvailable(imgui minhook)
+FetchContent_MakeAvailable(minhook)
 
 # NVIDIA DLSS SDK (NGX): only the x64 files we need, straight from the tagged repo. Not committed and
 # not redistributed on its own (LICENSE.txt in the SDK); nvngx_dlss.dll is deployed next to the game.
@@ -51,49 +47,30 @@ file(GLOB_RECURSE MINHOOK_SOURCES ${minhook_SOURCE_DIR}/src/*.c)
 add_library(minhook STATIC ${MINHOOK_SOURCES})
 target_include_directories(minhook PUBLIC ${minhook_SOURCE_DIR}/include)
 
-add_library(imgui STATIC
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
-target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-target_compile_definitions(imgui PUBLIC IMGUI_IMPL_WIN32_DISABLE_GAMEPAD)
-
 add_library(kcd_clarity SHARED
     src/core/dllmain.cpp
     src/core/log.cpp
     src/core/config.cpp
     src/core/crash.cpp
-    src/core/d3d_debug.cpp
     src/core/proxy_dinput8.cpp
     src/core/proxy_dinput8.asm
     src/core/dinput8.def
-    src/game/renderer.cpp
     src/game/symbols.cpp
     src/hooks/d3d11_hooks.cpp
     src/hooks/present.cpp
-    src/renderer/canary.cpp
-    src/renderer/frame_dump.cpp
-    src/renderer/mip_bias.cpp
-    src/renderer/shadow_noise.cpp
     src/renderer/velocity_format.cpp
     src/renderer/velocity_mask.cpp
-    src/renderer/screen_size_fix.cpp
     src/renderer/state_backup.cpp
     src/renderer/taa_dlss.cpp
-    src/upscaler/dlss.cpp
-    src/ui/input.cpp
-    src/ui/overlay.cpp)
+    src/upscaler/dlss.cpp)
 set_target_properties(kcd_clarity PROPERTIES OUTPUT_NAME dinput8)
 target_include_directories(kcd_clarity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${DLSS_SDK_DIR}/include)
 target_compile_definitions(kcd_clarity PRIVATE
     KC_VERSION="${PROJECT_VERSION}" WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_compile_options(kcd_clarity PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/W4;/permissive->")
 # No static import of d3d11/dxgi: the loader waits for the game to load d3d11.dll itself.
-# d3dcompiler (ImGui DX11 backend, depth-copy shader) is delay-loaded so the proxy pulls in nothing at process start.
-target_link_libraries(kcd_clarity PRIVATE minhook imgui delayimp d3dcompiler
+# d3dcompiler (our shaders, TAA reflection) is delay-loaded so the proxy pulls in nothing at process start.
+target_link_libraries(kcd_clarity PRIVATE minhook delayimp d3dcompiler
     ${DLSS_SDK_DIR}/lib/Windows_x86_64/x64/nvsdk_ngx_s.lib)
-target_link_options(kcd_clarity PRIVATE /DELAYLOAD:d3dcompiler_47.dll /DELAYLOAD:dwmapi.dll /IGNORE:4199
+target_link_options(kcd_clarity PRIVATE /DELAYLOAD:d3dcompiler_47.dll /IGNORE:4199
     /PDBALTPATH:%_PDB%)  # only the PDB file name in the DLL, not the build path

@@ -8,13 +8,8 @@
 #include <MinHook.h>
 
 #include "core/log.h"
-#include "game/renderer.h"
-#include "renderer/canary.h"
-#include "renderer/frame_dump.h"
-#include "renderer/shadow_noise.h"
 #include "renderer/taa_dlss.h"
 #include "renderer/velocity_mask.h"
-#include "ui/overlay.h"
 
 namespace kc {
 
@@ -30,13 +25,8 @@ static ResizeBuffersFn o_resize_buffers;
 
 static HRESULT STDMETHODCALLTYPE hk_present(IDXGISwapChain* swapchain, UINT sync, UINT flags) {
     if (!(flags & DXGI_PRESENT_TEST)) {
-        frame_dump::on_present(swapchain);  // before the overlay draws
-        game::on_present();
-        canary::on_present();
         taa_dlss::on_present();
         velocity_mask::on_present();
-        shadow_noise::on_present(swapchain);
-        overlay::on_present(swapchain);
     }
     HRESULT hr = o_present(swapchain, sync, flags);
     static bool logged;
@@ -55,7 +45,6 @@ static HRESULT STDMETHODCALLTYPE hk_present(IDXGISwapChain* swapchain, UINT sync
 
 static HRESULT STDMETHODCALLTYPE hk_resize_buffers(IDXGISwapChain* swapchain, UINT count, UINT width,
                                                    UINT height, DXGI_FORMAT format, UINT flags) {
-    overlay::on_resize_begin();
     HRESULT hr = o_resize_buffers(swapchain, count, width, height, format, flags);
     logf("ResizeBuffers %ux%u fmt %d -> 0x%08lx", width, height, (int)format, hr);
     return hr;
