@@ -55,10 +55,24 @@ preset=0           ; NGX render preset, 0 = DLSS default
 velocity16=1       ; object motion vectors at 16 bits (restart to change)
 velocity_cleanup=1 ; camera motion on occluders in the engine's velocity target
 force_halton=1     ; Halton jitter pattern, applied only while output=1
+cut_guard=1        ; zero the motion vectors on camera cuts
 ```
 
 `velocity16` and `velocity_cleanup` also change the velocity data the game's own SMAA 2TX reads. Set both to 0 for a
 completely stock game image. That combination hasn't been tested with Encore yet.
+
+## Camera cuts and UI
+
+On a camera cut (a dialogue shot change, a teleport, a map or menu transition) the game's reprojection still points at
+the previous shot for one frame. Those vectors would make frame generation warp the whole image, text included. With
+`cut_guard=1`, when more than half the screen moves over a quarter of its width in one frame, the vectors for that
+frame are zeroed on the GPU, so Encore blends the two frames instead of warping. Each detected cut is logged in
+`kcd_clarity.log`. The log also records when the game stops and resumes drawing its 3D scene (map, menus,
+loading); those frames have no DLSS call, so Encore uses its own motion estimation.
+
+Text over a moving scene can still ghost slightly. Encore's fix for that, UI recomposition, needs the scene and the
+interface as separate layers, which Encore 2.5.0 only accepts on DirectX 12 or through DLSS frame-generation inputs.
+In Encore, **Frame rate > Protection tuning > Classic** may also reduce artifacts that the default *Refined* leaves.
 
 ## Uninstall
 
@@ -70,14 +84,19 @@ Needs Visual Studio 2022 (or Build Tools) with the C++ x64 workload; CMake and N
 from the repository root. The output is `build\dinput8.dll`; NVIDIA's runtime is copied to `build\ngx\rel`.
 `build.cmd dist` also packages a zip. CMake downloads MinHook and the needed DLSS SDK files and checks their hashes.
 
-Offline regression test (software D3D11, does not start the game), from an x64 developer prompt:
+Offline regression tests (software D3D11, they do not start the game), from an x64 developer prompt:
 
 ```bat
 mkdir build\test
 cd build\test
 cl /nologo /std:c++20 /EHsc /MT /DNOMINMAX /DWIN32_LEAN_AND_MEAN /I..\..\src ..\..\tests\velocity_mask_warp.cpp ..\..\src\renderer\velocity_mask.cpp ..\..\src\renderer\state_backup.cpp /Fe:velocity_mask_warp.exe /link d3d11.lib d3dcompiler.lib
-velocity_mask_warp.exe
+cl /nologo /std:c++20 /EHsc /MT /DNOMINMAX /DWIN32_LEAN_AND_MEAN ..\..\tests\cut_guard_warp.cpp /Fe:cut_guard_warp.exe /link d3d11.lib d3dcompiler.lib
+.\velocity_mask_warp.exe
+.\cut_guard_warp.exe ..\..\src\renderer\taa_dlss.cpp
 ```
+
+`velocity_mask_warp` covers the velocity cleanup crash fix. `cut_guard_warp` compiles the motion-vector shaders and
+checks that vectors are kept on normal and fast camera motion and zeroed on a cut.
 
 ## Changes from KCD1 Clarity 0.2.0
 
@@ -85,6 +104,7 @@ velocity_mask_warp.exe
   generating frames. The velocity cleanup now holds its texture references for the whole pass, defers the reset that
   Present triggers to the render path, and skips cleanup when resources are missing.
 - **Game AA output:** new `output=0` mode keeps the game's SMAA 2TX image on screen.
+- **Camera-cut guard:** zeroes the motion vectors on frames where the camera jumps (see above).
 - **Removed:**
   - The F8/F3 menu and Dear ImGui
   - The quality modes below native, with all their sub-resolution fixes
